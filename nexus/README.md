@@ -42,7 +42,7 @@ The HTTP tests use stubs. The real render tests skip themselves when LibreOffice
 
 ## Releasing
 
-Tag the commit `nexus-vX.Y.Z` and push the tag (`git tag nexus-v1.0.0 && git push origin nexus-v1.0.0`). The workflow `.github/workflows/nexus-image.yml` runs the tests inside the image, then builds `linux/amd64` and `linux/arm64` and pushes `ghcr.io/rishabmunot/nexus-carbone:X.Y.Z`. Nexus picks a version with `NEXUS_CARBONE_TAG=X.Y.Z` in `infra/.env`.
+Tag the commit `nexus-vX.Y.Z` and push the tag (`git tag -a nexus-v1.1.0 -m … && git push origin nexus-v1.1.0`). There is no registry: each machine builds the image itself. On the VM, check out the tag in `../nexus-carbone` and rerun `pnpm services:up` in Nexus (see Nexus `infra/README.md`). Before tagging, run `npm run test:docker` here: it runs every test inside the image.
 
 ## Known limits
 
