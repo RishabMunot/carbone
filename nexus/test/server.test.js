@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { PNG } = require('pngjs');
 const { buildApp } = require('../server/app');
 const { render, RenderError } = require('../server/render');
 const { version } = require('../package.json');
@@ -138,6 +139,25 @@ describe('real render (needs LibreOffice)', function () {
   it('renders hello.docx to a one-page PDF', async function () {
     this.timeout(60000);
     const { pdf, pageCount } = await render({ template, data: { name: 'Nexus' }, dpi: 300 });
+    assert.strictEqual(pdf.subarray(0, 4).toString(), '%PDF');
+    assert.strictEqual(pageCount, 1);
+  });
+
+  it('renders pictures.docx with every picture field to a one-page PDF', async function () {
+    this.timeout(60000);
+    const photo = new PNG({ width: 2, height: 2 });
+    photo.data.fill(0xff);
+    const { pdf, pageCount } = await render({
+      template: fs.readFileSync(path.join(__dirname, 'fixtures/pictures.docx')),
+      data: {
+        photo: 'data:image/png;base64,' + PNG.sync.write(photo).toString('base64'),
+        link: 'https://nexus.test/p/42',
+        code: 'ABC-123',
+        hex: '#1F3A5F',
+        colours: [{ hex: '#111111' }, { hex: '#222222' }],
+      },
+      dpi: 203,
+    });
     assert.strictEqual(pdf.subarray(0, 4).toString(), '%PDF');
     assert.strictEqual(pageCount, 1);
   });

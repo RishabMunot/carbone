@@ -8,8 +8,10 @@
     "test": "mocha --exit test/*.test.js"
   },
   "dependencies": {
+    "bwip-js": "^4",
     "fastify": "^5",
     "pdf-lib": "^1.17",
+    "pngjs": "^7",
     "yauzl": "2.10.0",
     "yazl": "2.5.1"
   },
