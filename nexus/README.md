@@ -25,13 +25,24 @@ RENDER_TOKEN=dev npm run serve
 
 Converting to PDF needs LibreOffice, which is not installed on the Mac on purpose; the Docker image has it. Without LibreOffice `POST /render` fails and the server cannot start its converter.
 
+## Docker image
+
+`nexus/Dockerfile` (build context = the fork root, ignore rules in `nexus/Dockerfile.dockerignore`) installs LibreOffice Writer, Noto and Inter fonts on `node:22-bookworm-slim`. Stages: `test` runs every test; `runtime` (the default) serves on port 4000 as user `node`.
+
+To run the image beside Nexus (locally `pnpm services:up`, and on the VM), see `infra/README.md` in the Nexus repo.
+
 ## Tests
 
 ```
-cd nexus && npm test
+cd nexus && npm test          # on the Mac: the real render tests skip themselves
+cd nexus && npm run test:docker   # inside the image: every test, the LibreOffice renders included
 ```
 
-The HTTP tests use stubs. The one real render test skips itself when LibreOffice (`soffice`) is missing; it runs inside the Docker image.
+The HTTP tests use stubs. The real render tests skip themselves when LibreOffice (`soffice`) is missing; they run inside the Docker image.
+
+## Releasing
+
+Tag the commit `nexus-vX.Y.Z` and push the tag (`git tag nexus-v1.0.0 && git push origin nexus-v1.0.0`). The workflow `.github/workflows/nexus-image.yml` runs the tests inside the image, then builds `linux/amd64` and `linux/arm64` and pushes `ghcr.io/rishabmunot/nexus-carbone:X.Y.Z`. Nexus picks a version with `NEXUS_CARBONE_TAG=X.Y.Z` in `infra/.env`.
 
 ## Known limits
 

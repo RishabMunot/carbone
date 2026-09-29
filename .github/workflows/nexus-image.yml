@@ -1,0 +1,41 @@
+# Nexus document service image: test, then publish to GHCR on a tag nexus-vX.Y.Z (see nexus/README.md).
+name: Nexus image
+on:
+  push:
+    tags: ['nexus-v*']
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the tests inside the image (LibreOffice included)
+        run: |
+          docker build -f nexus/Dockerfile --target test -t nexus-carbone:test .
+          docker run --rm nexus-carbone:test
+
+      - name: Version from the tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#nexus-v}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR names are lower case. The VM and the Mac may differ in architecture, so build both.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: nexus/Dockerfile
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/rishabmunot/nexus-carbone:${{ steps.version.outputs.version }}

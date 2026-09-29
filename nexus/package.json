@@ -5,7 +5,8 @@
   "description": "Nexus document service: Word templates + JSON to PDF, on top of Carbone",
   "scripts": {
     "serve": "node server/index.js",
-    "test": "mocha --exit test/*.test.js"
+    "test": "mocha --exit test/*.test.js",
+    "test:docker": "docker build -f Dockerfile --target test -t nexus-carbone:test .. && docker run --rm nexus-carbone:test"
   },
   "dependencies": {
     "bwip-js": "^4",
