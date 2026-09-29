@@ -38,13 +38,13 @@ function docx(file, bodyXml, { rels = '', media = {} } = {}) {
   zip.outputStream.pipe(fs.createWriteStream(path.join(__dirname, file)));
 }
 
-// An inline 25.4 mm (914400 EMU) square picture showing the placeholder; descr is its alt text.
+// An inline 25.4 mm (914400 EMU) square picture showing the placeholder; descr is its alt text (Word writes it twice).
 function picture(id, descr) {
   return '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">' +
     '<wp:extent cx="914400" cy="914400"/>' +
     `<wp:docPr id="${id}" name="Picture ${id}" descr="${descr}"/>` +
     `<a:graphic><a:graphicData uri="${PIC}"><pic:pic>` +
-    `<pic:nvPicPr><pic:cNvPr id="${id}" name="Picture ${id}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:nvPicPr><pic:cNvPr id="${id}" name="Picture ${id}" descr="${descr}"/><pic:cNvPicPr/></pic:nvPicPr>` +
     '<pic:blipFill><a:blip r:embed="rIdPh"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
     '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>' +
     '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
@@ -66,6 +66,7 @@ docx('pictures.docx',
   `<w:p>${picture(2, '{d.link:qrcode}')}</w:p>` +
   `<w:p>${picture(3, '{d.code:barcode(code128)}')}</w:p>` +
   `<w:p>${picture(4, '{d.hex:swatch}')}</w:p>` +
+  `<w:p>${picture(6, '{d.ean:barcode(ean13)}')}</w:p>` +
   `<w:p>${picture(5, '{d.colours[i].hex:swatch}')}</w:p>` +
   '<w:p><w:r><w:t>{d.colours[i+1].hex}</w:t></w:r></w:p>',
   {

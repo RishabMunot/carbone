@@ -153,6 +153,7 @@ describe('real render (needs LibreOffice)', function () {
         photo: 'data:image/png;base64,' + PNG.sync.write(photo).toString('base64'),
         link: 'https://nexus.test/p/42',
         code: 'ABC-123',
+        ean: '5901234123457',
         hex: '#1F3A5F',
         colours: [{ hex: '#111111' }, { hex: '#222222' }],
       },

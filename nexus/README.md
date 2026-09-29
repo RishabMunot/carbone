@@ -33,6 +33,10 @@ cd nexus && npm test
 
 The HTTP tests use stubs. The one real render test skips itself when LibreOffice (`soffice`) is missing; it runs inside the Docker image.
 
+## Known limits
+
+- Picture fields are filled only in the document body (`word/document.xml`); pictures in headers and footers are left as placeholders.
+
 ## Licence
 
 The Carbone Community License stays as is (`../LICENSE.md`). This fork is used only inside Nexus.

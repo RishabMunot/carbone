@@ -1,5 +1,6 @@
 // Picture fields: a placeholder picture whose alt text holds a tag like {d.x:qrcode}.
 // The formatters turn the value into a marker in the alt text; fillPictures swaps in the image.
+// Values are URI-encoded: Carbone doesn't escape " and the marker sits in an XML attribute.
 const yauzl = require('yauzl');
 const yazl = require('yazl');
 const bwipjs = require('bwip-js');
@@ -13,10 +14,10 @@ const IMAGE_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relatio
 const CONTENT_TYPES = { png: 'image/png', jpeg: 'image/jpeg' };
 
 carbone.addFormatters({
-  image: (v) => v ? 'NXIMG:' + v : 'NXIMG:',
-  qrcode: (v) => 'NXQR:' + (v ?? ''),
-  barcode: (v, type) => 'NXBAR:' + type + ':' + (v ?? ''),
-  swatch: (v) => 'NXSW:' + (v ?? ''),
+  image: (v) => 'NXIMG:' + encodeURIComponent(v || ''),
+  qrcode: (v) => 'NXQR:' + encodeURIComponent(v ?? ''),
+  barcode: (v, type) => 'NXBAR:' + type + ':' + encodeURIComponent(v ?? ''),
+  swatch: (v) => 'NXSW:' + encodeURIComponent(v ?? ''),
 });
 
 function unzip(buffer) {
@@ -29,6 +30,7 @@ function unzip(buffer) {
         zip.openReadStream(entry, (e, stream) => {
           if (e) return reject(e);
           const chunks = [];
+          stream.on('error', reject);
           stream.on('data', (c) => chunks.push(c));
           stream.on('end', () => { entries.push({ name: entry.fileName, data: Buffer.concat(chunks) }); zip.readEntry(); });
         });
@@ -51,8 +53,10 @@ function zip(entries) {
   });
 }
 
-const unescapeXml = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
-const attr = (xml, tag, name) => Number(xml.match(new RegExp(`<${tag}\\b[^>]*\\b${name}="(\\d+)"`))[1]);
+const attr = (xml, tag, name) => {
+  const match = xml.match(new RegExp(`<${tag}\\b[^>]*\\b${name}="(\\d+)"`));
+  return match ? Number(match[1]) : undefined;
+};
 const setAttr = (xml, tag, name, value) => xml.replace(new RegExp(`(<${tag}\\b[^>]*\\b${name}=")[^"]*"`), `$1${value}"`);
 const pngSize = (png) => ({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) });
 
@@ -90,18 +94,14 @@ function imageFile(uri) {
 }
 
 // The new image for a marked picture, or null to remove it. resize: set the extent from the PNG.
-async function pictureFor(marker, cx, cy, dpi) {
-  const [, kind, value] = marker.match(/^NX(IMG|QR|BAR|SW):([\s\S]*)$/) ?? [];
-  if (kind === 'IMG') return value ? imageFile(value) : null;
-  if (kind === 'SW') return value ? { ext: 'png', data: swatchPng(value) } : null;
-  if (kind === 'QR') return value ? { ext: 'png', data: await codePng('qrcode', value, cx, cy, dpi), resize: true } : null;
-  if (kind === 'BAR') {
-    const [type, ...rest] = value.split(':');
-    const text = rest.join(':');
-    if (!BARCODES.includes(type)) throw new RenderError(`Unsupported barcode: ${type}`);
-    return text ? { ext: 'png', data: await codePng(type, text, cx, cy, dpi), resize: true } : null;
-  }
-  return undefined; // not ours: leave the picture alone
+async function pictureFor(kind, payload, cx, cy, dpi) {
+  const [type, encoded] = kind === 'BAR' ? payload.split(':') : [undefined, payload];
+  if (kind === 'BAR' && !BARCODES.includes(type)) throw new RenderError(`Unsupported barcode: ${type}`);
+  const value = decodeURIComponent(encoded ?? '');
+  if (!value) return null;
+  if (kind === 'IMG') return imageFile(value);
+  if (kind === 'SW') return { ext: 'png', data: swatchPng(value) };
+  return { ext: 'png', data: await codePng(kind === 'QR' ? 'qrcode' : type, value, cx, cy, dpi), resize: true };
 }
 
 async function fillPictures(docx, { dpi }) {
@@ -114,16 +114,18 @@ async function fillPictures(docx, { dpi }) {
   if (!xml.includes('descr="NX')) return docx;
 
   const drawings = xml.match(/<w:drawing>[\s\S]*?<\/w:drawing>/g) ?? [];
+  const maxId = Math.max(0, ...[...xml.matchAll(/<wp:docPr\b[^>]*\bid="(\d+)"/g)].map((m) => Number(m[1])));
   const newRels = [];
   const usedExts = new Set();
   let n = 0;
   for (const drawing of drawings) {
-    const descr = drawing.match(/<wp:docPr\b[^>]*\bdescr="(NX[^"]*)"/);
-    if (!descr) continue;
+    // alt text that merely starts with NX isn't ours: leave the picture alone
+    const marker = drawing.match(/<wp:docPr\b[^>]*\bdescr="NX(IMG|QR|BAR|SW):([^"]*)"/);
+    if (!marker) continue;
     const cx = attr(drawing, 'wp:extent', 'cx');
     const cy = attr(drawing, 'wp:extent', 'cy');
-    const picture = await pictureFor(unescapeXml(descr[1]), cx, cy, dpi);
-    if (picture === undefined) continue;
+    if (cx === undefined || cy === undefined) throw new RenderError('Picture field without a size');
+    const picture = await pictureFor(marker[1], marker[2], cx, cy, dpi);
     if (picture === null) { xml = xml.replace(drawing, () => ''); continue; }
 
     n++;
@@ -132,7 +134,9 @@ async function fillPictures(docx, { dpi }) {
     newRels.push(`<Relationship Id="rIdNx${n}" Type="${IMAGE_REL}" Target="media/${file}"/>`);
     usedExts.add(picture.ext);
     let filled = setAttr(drawing, 'a:blip', 'r:embed', `rIdNx${n}`);
-    filled = setAttr(filled, 'wp:docPr', 'id', 10000 + n);
+    filled = setAttr(filled, 'wp:docPr', 'id', maxId + n);
+    filled = setAttr(filled, 'wp:docPr', 'descr', '');
+    filled = setAttr(filled, 'pic:cNvPr', 'descr', '');
     if (picture.resize) {
       const { width, height } = pngSize(picture.data);
       for (const tag of ['wp:extent', 'a:ext']) {
