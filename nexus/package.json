@@ -1,0 +1,19 @@
+{
+  "name": "nexus-document-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nexus document service: Word templates + JSON to PDF, on top of Carbone",
+  "scripts": {
+    "serve": "node server/index.js",
+    "test": "mocha test/*.test.js"
+  },
+  "dependencies": {
+    "fastify": "^5",
+    "pdf-lib": "^1.17",
+    "yauzl": "2.10.0",
+    "yazl": "2.5.1"
+  },
+  "devDependencies": {
+    "mocha": "^12.0.2"
+  }
+}
