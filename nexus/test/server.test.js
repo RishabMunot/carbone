@@ -27,6 +27,17 @@ describe('document service HTTP layer', () => {
     assert.deepStrictEqual(res.json(), { status: 'ok', version });
   });
 
+  it('GET /health?x=1 still answers without a token', async () => {
+    const res = await app().inject({ method: 'GET', url: '/health?x=1' });
+    assert.strictEqual(res.statusCode, 200);
+  });
+
+  it('POST /render with a wrong token is 401', async () => {
+    const res = await post(app(), { template: 'AAAA', data: {} }, { authorization: 'Bearer nope' });
+    assert.strictEqual(res.statusCode, 401);
+    assert.deepStrictEqual(res.json(), { message: 'Unauthorized' });
+  });
+
   it('POST /render without the token is 401', async () => {
     const res = await post(app(), { template: 'AAAA', data: {} }, {});
     assert.strictEqual(res.statusCode, 401);
@@ -121,6 +132,8 @@ describe('real render (needs LibreOffice)', function () {
       this.skip(); // LibreOffice is not installed on the Mac on purpose
     }
   });
+
+  after(() => new Promise((resolve) => require('../../lib/converter').exit(resolve)));
 
   it('renders hello.docx to a one-page PDF', async function () {
     this.timeout(60000);

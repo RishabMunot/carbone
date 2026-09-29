@@ -8,7 +8,7 @@ function buildApp({ token, render, fonts }) {
   const app = Fastify({ bodyLimit: 30 * 1024 * 1024 });
 
   app.addHook('onRequest', async (req, reply) => {
-    if (req.url === '/health' || token === undefined || token === '') return;
+    if (req.routeOptions.url === '/health' || token === undefined || token === '') return;
     if (req.headers.authorization !== `Bearer ${token}`) {
       return reply.code(401).send({ message: 'Unauthorized' });
     }
