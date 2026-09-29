@@ -1,7 +1,10 @@
 const assert = require('assert');
+const fs = require('fs/promises');
+const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
 const yauzl = require('yauzl');
+const yazl = require('yazl');
 const bwipjs = require('bwip-js');
 const { PNG } = require('pngjs');
 const carbone = require('../../lib/index');
@@ -48,8 +51,8 @@ function unzip(buffer) {
   });
 }
 
-async function fill(overrides = {}, dpi = DPI) {
-  const merged = await renderDocx(fixture, { ...data, ...overrides }, {});
+async function fill(overrides = {}, dpi = DPI, template = fixture) {
+  const merged = await renderDocx(template, { ...data, ...overrides }, {});
   const files = await unzip(await fillPictures(merged, { dpi }));
   const xml = files['word/document.xml'].toString();
   const rels = files['word/_rels/document.xml.rels'].toString();
@@ -63,6 +66,20 @@ async function fill(overrides = {}, dpi = DPI) {
   };
   const media = (drawing) => files['word/' + target(drawing)];
   return { files, xml, find, target, media };
+}
+
+// A copy of the fixture with `from` replaced by `to` in its document, written to a temp file.
+async function fixtureWith(from, to) {
+  const files = await unzip(await fs.readFile(fixture));
+  files['word/document.xml'] = Buffer.from(files['word/document.xml'].toString().split(from).join(to));
+  const out = new yazl.ZipFile();
+  for (const [name, bytes] of Object.entries(files)) out.addBuffer(bytes, name);
+  out.end();
+  const chunks = [];
+  for await (const chunk of out.outputStream) chunks.push(chunk);
+  const file = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'nx-test-')), 'pictures.docx');
+  await fs.writeFile(file, Buffer.concat(chunks));
+  return file;
 }
 
 // A symbol drawn with whole-dot modules the way fillPictures sizes it for a 25.4 mm placeholder.
@@ -107,6 +124,33 @@ describe('picture fields', () => {
     assert.ok(png.width <= DPI, `width ${png.width} dots`);
     assert.strictEqual(attr(drawing, 'wp:extent', 'cx'), Math.round(png.width * EMU_PER_INCH / DPI));
     assert.strictEqual(attr(drawing, 'a:ext', 'cx'), Math.round(png.width * EMU_PER_INCH / DPI));
+  });
+
+  it("draws Carbone Enterprise's :barcode(qrcode) exactly like :qrcode", async () => {
+    const template = await fixtureWith('{d.link:qrcode}', '{d.link:barcode(qrcode)}');
+    try {
+      const qr = await fill();
+      const bar = await fill({}, DPI, template);
+      const [drawing] = bar.find(2);
+      assert.ok(bar.media(drawing).equals(qr.media(qr.find(2)[0])));
+      assert.strictEqual(drawing, qr.find(2)[0]);
+    } finally {
+      await fs.rm(path.dirname(template), { recursive: true, force: true });
+    }
+  });
+
+  it('sizes a QR code to the placeholder rounded to the nearest dot', async () => {
+    // 14.5 mm at 203 dpi is 115.9 dots: 116 fits 29 modules of 4 dots
+    const template = await fixtureWith(
+      '<wp:extent cx="914400" cy="914400"/><wp:docPr id="2"',
+      '<wp:extent cx="522000" cy="522000"/><wp:docPr id="2"',
+    );
+    try {
+      const { find, media } = await fill({}, DPI, template);
+      assert.strictEqual(PNG.sync.read(media(find(2)[0])).width, 116);
+    } finally {
+      await fs.rm(path.dirname(template), { recursive: true, force: true });
+    }
   });
 
   it('draws a barcode no taller than the placeholder', async () => {

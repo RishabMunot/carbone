@@ -16,7 +16,8 @@ const CONTENT_TYPES = { png: 'image/png', jpeg: 'image/jpeg' };
 carbone.addFormatters({
   image: (v) => 'NXIMG:' + encodeURIComponent(v || ''),
   qrcode: (v) => 'NXQR:' + encodeURIComponent(v ?? ''),
-  barcode: (v, type) => 'NXBAR:' + type + ':' + encodeURIComponent(v ?? ''),
+  // Carbone Enterprise writes a QR code as barcode(qrcode): the same as qrcode
+  barcode: (v, type) => (type === 'qrcode' ? 'NXQR:' : 'NXBAR:' + type + ':') + encodeURIComponent(v ?? ''),
   swatch: (v) => 'NXSW:' + encodeURIComponent(v ?? ''),
 });
 
@@ -69,8 +70,9 @@ async function drawCode(bcid, text, options) {
 }
 
 // A QR code or barcode whose modules are a whole number of dots at the target DPI.
+// The placeholder is rounded to the nearest dot: 14.5 mm at 203 dpi (115.9 dots) is 116.
 async function codePng(bcid, text, cx, cy, dpi) {
-  const dots = (emu) => Math.floor(emu / EMU_PER_INCH * dpi);
+  const dots = (emu) => Math.round(emu / EMU_PER_INCH * dpi);
   const modules = pngSize(await drawCode(bcid, text, { scale: 1 })).width;
   const scale = Math.max(1, Math.floor(dots(cx) / modules));
   // bwip-js takes the bar height in mm (at 72 units an inch) and draws it one dot taller than asked

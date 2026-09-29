@@ -47,6 +47,7 @@ Tag the commit `nexus-vX.Y.Z` and push the tag (`git tag nexus-v1.0.0 && git pus
 ## Known limits
 
 - Picture fields are filled only in the document body (`word/document.xml`); pictures in headers and footers are left as placeholders.
+- Coming from Carbone Enterprise: `{d.x:barcode(qrcode)}` works and draws the same QR code as `{d.x:qrcode}`. A bare `{d.x}` as a picture's alt text (Enterprise's image syntax) is not supported: write `{d.x:image}`.
 
 ## Licence
 
