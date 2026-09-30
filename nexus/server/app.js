@@ -3,8 +3,9 @@ const { RenderError } = require('./render');
 const { version } = require('../package.json');
 
 const DPIS = [203, 300, 600];
+const ENCODINGS = ['z64', 'hex'];
 
-function buildApp({ token, render, fonts }) {
+function buildApp({ token, render, fonts, rasterize }) {
   const app = Fastify({ bodyLimit: 30 * 1024 * 1024 });
 
   app.addHook('onRequest', async (req, reply) => {
@@ -29,6 +30,22 @@ function buildApp({ token, render, fonts }) {
     try {
       const { pdf, pageCount } = await render({ template: Buffer.from(template, 'base64'), data, dpi });
       return reply.header('X-Page-Count', String(pageCount)).type('application/pdf').send(pdf);
+    } catch (e) {
+      if (e instanceof RenderError) return reply.code(422).send({ message: e.message });
+      throw e;
+    }
+  });
+
+  app.post('/rasterize', async (req, reply) => {
+    const { pdf, dpi, encoding } = req.body ?? {};
+    if (typeof pdf !== 'string') return reply.code(400).send({ message: 'pdf must be a base64 string' });
+    if (!DPIS.includes(dpi)) return reply.code(400).send({ message: `dpi must be one of ${DPIS.join(', ')}` });
+    if (!ENCODINGS.includes(encoding)) {
+      return reply.code(400).send({ message: `encoding must be one of ${ENCODINGS.join(', ')}` });
+    }
+
+    try {
+      return { pages: await rasterize({ pdf: Buffer.from(pdf, 'base64'), dpi, encoding }) };
     } catch (e) {
       if (e instanceof RenderError) return reply.code(422).send({ message: e.message });
       throw e;

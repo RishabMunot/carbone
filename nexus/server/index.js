@@ -3,6 +3,7 @@ const { promisify } = require('util');
 const carbone = require('../../lib/index');
 const { buildApp } = require('./app');
 const { render } = require('./render');
+const { rasterize } = require('./rasterize');
 
 const run = promisify(execFile);
 
@@ -20,7 +21,7 @@ async function fonts() {
 
 carbone.set({ factories: 2, startFactory: true });
 
-buildApp({ token: process.env.RENDER_TOKEN, render, fonts })
+buildApp({ token: process.env.RENDER_TOKEN, render, fonts, rasterize })
   .listen({ host: process.env.HOST ?? '127.0.0.1', port: Number(process.env.PORT ?? 4000) })
   .catch((e) => {
     console.error(e);

@@ -13,6 +13,10 @@ Carbone is required by path (`require('../../lib/index')`). Its own dependencies
   - Carbone or picture-field error -> `422 { "message": "<error text>" }`;
   - bad token -> `401 { "message": "Unauthorized" }`;
   - bad body -> `400 { "message": ... }`.
+- `POST /rasterize` (token), JSON `{ "pdf": "<base64>", "dpi": 203 | 300 | 600, "encoding": "z64" | "hex" }` (all three required) -> `200 { "pages": [ { "widthMm", "heightMm", "widthDots", "heightDots", "gfa" } ] }`:
+  - `gfa` is one complete ZPL `^GFA,<bytes>,<bytes>,<bytes per row>,<data>` field: a 1-bit bitmap (no anti-aliasing, 1 = black dot) of the page at that dpi, rows padded to whole bytes. `z64` data is `:Z64:<base64 of zlib>:<CRC-16/CCITT-FALSE of the base64, 4 lowercase hex digits>`; `hex` is uppercase hex;
+  - page size comes from the PDF's MediaBox; pages are rasterized by `pdftoppm -mono` (poppler-utils, in the Docker image only), at most 1,000 pages;
+  - not a readable PDF, or too many pages -> `422 { "message" }`; bad token -> 401; bad body -> 400.
 - Token: header `Authorization: Bearer <RENDER_TOKEN>`. It is checked only when `RENDER_TOKEN` is set, which it always is in Docker. The service listens on `HOST` (default `127.0.0.1`) and `PORT` (default `4000`), with a 30 MB body limit.
 
 ## Run locally
@@ -23,22 +27,22 @@ npm install
 RENDER_TOKEN=dev npm run serve
 ```
 
-Converting to PDF needs LibreOffice, which is not installed on the Mac on purpose; the Docker image has it. Without LibreOffice `POST /render` fails and the server cannot start its converter.
+Converting to PDF needs LibreOffice, and `POST /rasterize` needs `pdftoppm`; neither is installed on the Mac on purpose, the Docker image has both. Without LibreOffice `POST /render` fails and the server cannot start its converter.
 
 ## Docker image
 
-`nexus/Dockerfile` (build context = the fork root, ignore rules in `nexus/Dockerfile.dockerignore`) installs LibreOffice Writer, Noto and Inter fonts on `node:22-bookworm-slim`. Stages: `test` runs every test; `runtime` (the default) serves on port 4000 as user `node`.
+`nexus/Dockerfile` (build context = the fork root, ignore rules in `nexus/Dockerfile.dockerignore`) installs LibreOffice Writer, poppler-utils (for `/rasterize`), Noto and Inter fonts on `node:22-bookworm-slim`. Stages: `test` runs every test; `runtime` (the default) serves on port 4000 as user `node`.
 
 To run the image beside Nexus (locally `pnpm services:up`, and on the VM), see `infra/README.md` in the Nexus repo.
 
 ## Tests
 
 ```
-cd nexus && npm test          # on the Mac: the real render tests skip themselves
+cd nexus && npm test          # on the Mac: the real render and rasterize tests skip themselves
 cd nexus && npm run test:docker   # inside the image: every test, the LibreOffice renders included
 ```
 
-The HTTP tests use stubs. The real render tests skip themselves when LibreOffice (`soffice`) is missing; they run inside the Docker image.
+The HTTP tests use stubs. The real render and rasterize tests skip themselves when LibreOffice (`soffice`) or `pdftoppm` is missing; they run inside the Docker image.
 
 ## Releasing
 

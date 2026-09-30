@@ -2,9 +2,9 @@
 # Reads upstream files (package*.json, lib/, formatters/) and never changes them.
 
 FROM node:22-bookworm-slim AS base
-# Noto Sans covers ₹; Inter comes from Debian's fonts-inter. python3-uno runs Carbone's lib/converter.py.
+# Noto Sans covers ₹; Inter comes from Debian's fonts-inter. python3-uno runs Carbone's lib/converter.py. poppler-utils gives pdftoppm for /rasterize.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libreoffice-writer-nogui python3-uno fontconfig fonts-noto-core fonts-noto-ui-core fonts-inter curl \
+  && apt-get install -y --no-install-recommends libreoffice-writer-nogui python3-uno fontconfig fonts-noto-core fonts-noto-ui-core fonts-inter curl poppler-utils \
   && rm -rf /var/lib/apt/lists/* \
   && fc-cache -f
 # On Linux Carbone starts soffice.bin directly and finds it on PATH
