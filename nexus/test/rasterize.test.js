@@ -1,7 +1,9 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const zlib = require('zlib');
+const { PDFDocument } = require('pdf-lib');
 const { buildApp } = require('../server/app');
 const { render } = require('../server/render');
 const { rasterize, packPbm, toGfa, crc16 } = require('../server/rasterize');
@@ -24,8 +26,8 @@ describe('rasterize packing', () => {
     assert.strictEqual(toGfa(bytes, 2, 'hex'), '^GFA,4,4,2,AA80FFC0');
   });
 
-  it('crc16 is CRC-16/CCITT-FALSE', () => {
-    assert.strictEqual(crc16('123456789'), 0x29b1);
+  it('crc16 is CRC-16/XMODEM', () => {
+    assert.strictEqual(crc16('123456789'), 0x31c3);
   });
 
   it('toGfa z64 decodes back to the same bytes and carries the CRC of the base64', () => {
@@ -33,8 +35,8 @@ describe('rasterize packing', () => {
     const gfa = toGfa(bytes, 8, 'z64');
     const [, total, total2, perRow, data] = gfa.match(/^\^GFA,(\d+),(\d+),(\d+),(.*)$/);
     assert.deepStrictEqual([total, total2, perRow], ['64', '64', '8']);
-    const [, b64, crc] = data.match(/^:Z64:([A-Za-z0-9+/=]+):([0-9a-f]{4})$/);
-    assert.strictEqual(crc, crc16(b64).toString(16).padStart(4, '0'));
+    const [, b64, crc] = data.match(/^:Z64:([A-Za-z0-9+/=]+):([0-9A-F]{4})$/);
+    assert.strictEqual(crc, crc16(b64).toString(16).toUpperCase().padStart(4, '0'));
     assert.ok(zlib.inflateSync(Buffer.from(b64, 'base64')).equals(bytes));
   });
 });
@@ -80,6 +82,24 @@ describe('POST /rasterize', () => {
     assert.ok(received.pdf.equals(Buffer.from('%PDF-stub')));
     assert.strictEqual(received.dpi, 300);
     assert.strictEqual(received.encoding, 'z64');
+  });
+
+  it('a pdftoppm failure on a readable PDF is 422 with its message', async () => {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'nx-bin-'));
+    fs.writeFileSync(path.join(bin, 'pdftoppm'), '#!/bin/sh\necho boom >&2\nexit 1\n', { mode: 0o755 });
+    const doc = await PDFDocument.create();
+    doc.addPage([100, 100]);
+    const readable = Buffer.from(await doc.save()).toString('base64');
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+    try {
+      const res = await post(app({ rasterize }), { pdf: readable, dpi: 203, encoding: 'hex' });
+      assert.strictEqual(res.statusCode, 422);
+      assert.match(res.json().message, /pdftoppm failed on page 1.*boom/);
+    } finally {
+      process.env.PATH = savedPath;
+      fs.rmSync(bin, { recursive: true, force: true });
+    }
   });
 
   it('a non-PDF is 422 (real rasterize, no poppler needed)', async () => {

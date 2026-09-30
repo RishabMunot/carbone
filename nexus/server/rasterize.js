@@ -9,10 +9,11 @@ const { RenderError } = require('./errors');
 
 const run = promisify(execFile);
 const MAX_PAGES = 1000;
+const PAGE_TIMEOUT_MS = 60000;
 
-// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF): what ZPL's :Z64: data ends with.
+// CRC-16/XMODEM (poly 0x1021, init 0x0000): what ZPL's :Z64: data ends with.
 function crc16(text) {
-  let crc = 0xffff;
+  let crc = 0;
   for (const byte of Buffer.from(text)) {
     crc ^= byte << 8;
     for (let i = 0; i < 8; i++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
@@ -37,7 +38,7 @@ function toGfa(bytes, bytesPerRow, encoding) {
   let data = bytes.toString('hex').toUpperCase();
   if (encoding === 'z64') {
     const b64 = zlib.deflateSync(bytes).toString('base64');
-    data = `:Z64:${b64}:${crc16(b64).toString(16).padStart(4, '0')}`;
+    data = `:Z64:${b64}:${crc16(b64).toString(16).toUpperCase().padStart(4, '0')}`;
   }
   return `^GFA,${bytes.length},${bytes.length},${bytesPerRow},${data}`;
 }
@@ -62,7 +63,12 @@ async function rasterize({ pdf, dpi, encoding }) {
     for (const [i, { width, height }] of sizes.entries()) {
       const n = String(i + 1);
       const out = path.join(dir, `page${n}`);
-      await run('pdftoppm', ['-mono', '-singlefile', '-r', String(dpi), '-f', n, '-l', n, file, out]);
+      try {
+        await run('pdftoppm', ['-mono', '-singlefile', '-r', String(dpi), '-f', n, '-l', n, file, out], { timeout: PAGE_TIMEOUT_MS });
+      } catch (e) {
+        if (e.code === 'ENOENT') throw e;
+        throw new RenderError(`pdftoppm failed on page ${n}: ${String(e.stderr || e.message).trim()}`);
+      }
       const image = packPbm(await fs.readFile(`${out}.pbm`));
       pages.push({
         widthMm: toMm(width),
