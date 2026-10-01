@@ -181,8 +181,8 @@ describe('real rasterize (needs LibreOffice and poppler)', function () {
     assert.ok(pages[0].gfa.startsWith('^GFA,') && pages[0].gfa.includes(':Z64:'));
   });
 
-  // Code 128 at 2 dots per module, drawn at exactly one PNG pixel per dot (as pictures.js does). pdftoppm -mono makes
-  // every bar one dot too thin and every space one dot too wide; the 3x threshold keeps every width.
+  // Code 128 at 2 dots per module, drawn at exactly one PNG pixel per dot (as pictures.js does). pdftoppm -mono widens
+  // some bars and narrows the spaces next to them by one dot (15 of 61 runs here); the 3x threshold keeps every width.
   it('keeps every Code 128 bar and space at its exact width at 203 dpi (pdftoppm -mono got 15 widths wrong here)', async function () {
     this.timeout(60000);
     const png = PNG.sync.read(await bwipjs.toBuffer({ bcid: 'code128', text: 'FAB000123', scale: 2, height: 8, paddingwidth: 0, paddingheight: 0 }));
