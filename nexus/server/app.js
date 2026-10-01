@@ -3,7 +3,7 @@ const { RenderError } = require('./render');
 const { version } = require('../package.json');
 
 const DPIS = [203, 300, 600];
-const ENCODINGS = ['z64', 'hex'];
+const ENCODINGS = ['z64', 'hex', 'raw'];
 
 function buildApp({ token, render, fonts, rasterize }) {
   const app = Fastify({ bodyLimit: 30 * 1024 * 1024 });

@@ -6,19 +6,44 @@ const zlib = require('zlib');
 const { PDFDocument } = require('pdf-lib');
 const { buildApp } = require('../server/app');
 const { render } = require('../server/render');
-const { rasterize, packPbm, toGfa, crc16 } = require('../server/rasterize');
+const { rasterize, parsePgm, downsample, toGfa, crc16 } = require('../server/rasterize');
 
 const TOKEN = 'secret';
 const auth = { authorization: `Bearer ${TOKEN}` };
 
-// 10 x 2 bitmap: row 1 = 1010101010, row 2 = 1111111111 (1 = black), rows padded to whole bytes.
-const pbm = Buffer.concat([Buffer.from('P4\n10 2\n'), Buffer.from([0xaa, 0x80, 0xff, 0xc0])]);
+// A binary PGM (P5, maxval 255): a comment line, then width, height, maxval and the pixels.
+const pgm = (width, height, pixels) =>
+  Buffer.concat([Buffer.from(`P5\n# made by a test\n${width} ${height}\n255\n`), Buffer.from(pixels)]);
 
 describe('rasterize packing', () => {
-  it('packPbm reads the size and the padded rows of a P4 image', () => {
-    const { width, height, bytesPerRow, bytes } = packPbm(pbm);
-    assert.deepStrictEqual({ width, height, bytesPerRow }, { width: 10, height: 2, bytesPerRow: 2 });
-    assert.deepStrictEqual([...bytes], [0xaa, 0x80, 0xff, 0xc0]);
+  it('parsePgm reads the size and the pixels of a P5 image with a comment', () => {
+    const { width, height, gray } = parsePgm(pgm(3, 2, [0, 1, 2, 253, 254, 255]));
+    assert.deepStrictEqual({ width, height }, { width: 3, height: 2 });
+    assert.deepStrictEqual([...gray], [0, 1, 2, 253, 254, 255]);
+  });
+
+  it('parsePgm rejects a truncated image', () => {
+    assert.throws(() => parsePgm(pgm(3, 2, [0, 1, 2])), /truncated/);
+  });
+
+  it('downsample turns each 3 x 3 block into one dot, black first, MSB first', () => {
+    const row = [0, 0, 0, 255, 255, 255];
+    const { width, height, bytesPerRow, bytes } = downsample(Buffer.from([...row, ...row, ...row]), 6, 3, 3, 150);
+    assert.deepStrictEqual({ width, height, bytesPerRow }, { width: 2, height: 1, bytesPerRow: 1 });
+    assert.deepStrictEqual([...bytes], [0b10000000]);
+  });
+
+  it('downsample rounds the size up and averages only the pixels an edge block has', () => {
+    // 7 x 1: dots cover columns 0-2, 3-5 and the single column 6
+    const { width, height, bytes } = downsample(Buffer.from([255, 255, 255, 255, 255, 255, 0]), 7, 1, 3, 150);
+    assert.deepStrictEqual({ width, height }, { width: 3, height: 1 });
+    assert.deepStrictEqual([...bytes], [0b00100000]);
+  });
+
+  it('downsample: an average of 149 is black and 150 is white', () => {
+    const block = (value) => Buffer.alloc(9, value);
+    assert.deepStrictEqual([...downsample(block(149), 3, 3, 3, 150).bytes], [0b10000000]);
+    assert.deepStrictEqual([...downsample(block(150), 3, 3, 3, 150).bytes], [0]);
   });
 
   it('toGfa hex is exact and uppercase', () => {
@@ -65,9 +90,22 @@ describe('POST /rasterize', () => {
     assert.strictEqual(res.statusCode, 400);
   });
 
-  it('an unknown encoding is 400', async () => {
+  it('an unknown encoding is 400 and names the three', async () => {
     const res = await post(app(), { pdf, dpi: 203, encoding: 'base64' });
     assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual(res.json().message, 'encoding must be one of z64, hex, raw');
+  });
+
+  it('raw is accepted and a page with rows passes through', async () => {
+    let received;
+    const pages = [{ widthMm: 1, heightMm: 2, widthDots: 8, heightDots: 1, bytesPerRow: 1, rows: 'gA==' }];
+    const res = await post(
+      app({ rasterize: async (args) => { received = args; return pages; } }),
+      { pdf, dpi: 203, encoding: 'raw' }
+    );
+    assert.strictEqual(res.statusCode, 200);
+    assert.deepStrictEqual(res.json(), { pages });
+    assert.strictEqual(received.encoding, 'raw');
   });
 
   it('passes the decoded pdf, dpi and encoding through and wraps the pages', async () => {
@@ -135,5 +173,32 @@ describe('real rasterize (needs LibreOffice and poppler)', function () {
     assert.strictEqual(pages[0].widthMm, 215.9);
     assert.strictEqual(pages[0].widthDots, Math.round((215.9 / 25.4) * 203));
     assert.ok(pages[0].gfa.startsWith('^GFA,') && pages[0].gfa.includes(':Z64:'));
+  });
+
+  // 8 neighbours all white = a speckle dot that no printer should burn. The owner's speckle came from grey edges on
+  // real label pages; this pure-black fixture never made poppler 22.12's -mono speckle, so it guards against regressions.
+  const isolatedDots = ({ rows, widthDots, heightDots, bytesPerRow }) => {
+    const bytes = Buffer.from(rows, 'base64');
+    const black = (x, y) => x >= 0 && y >= 0 && x < widthDots && y < heightDots && (bytes[y * bytesPerRow + (x >> 3)] >> (7 - (x & 7))) & 1;
+    let count = 0;
+    for (let y = 0; y < heightDots; y++) {
+      for (let x = 0; x < widthDots; x++) {
+        if (!black(x, y)) continue;
+        let lonely = true;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && black(x + dx, y + dy)) lonely = false;
+        if (lonely) count++;
+      }
+    }
+    return count;
+  };
+
+  it('a thin diagonal at 203 dpi is 160 x 160 dots with no isolated black dot (pdftoppm -mono also left 0 here)', async function () {
+    this.timeout(60000);
+    const pdf = fs.readFileSync(path.join(__dirname, 'fixtures/diagonal.pdf'));
+    const [page] = await rasterize({ pdf, dpi: 203, encoding: 'raw' });
+    assert.deepStrictEqual([page.widthDots, page.heightDots, page.bytesPerRow], [160, 160, 20]);
+    assert.strictEqual(Buffer.from(page.rows, 'base64').length, 160 * 20);
+    assert.ok(Buffer.from(page.rows, 'base64').some((byte) => byte), 'the page is not blank');
+    assert.strictEqual(isolatedDots(page), 0);
   });
 });

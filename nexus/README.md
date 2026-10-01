@@ -13,9 +13,10 @@ Carbone is required by path (`require('../../lib/index')`). Its own dependencies
   - Carbone or picture-field error -> `422 { "message": "<error text>" }`;
   - bad token -> `401 { "message": "Unauthorized" }`;
   - bad body -> `400 { "message": ... }`.
-- `POST /rasterize` (token), JSON `{ "pdf": "<base64>", "dpi": 203 | 300 | 600, "encoding": "z64" | "hex" }` (all three required) -> `200 { "pages": [ { "widthMm", "heightMm", "widthDots", "heightDots", "gfa" } ] }`:
-  - `gfa` is one complete ZPL `^GFA,<bytes>,<bytes>,<bytes per row>,<data>` field: a 1-bit bitmap (no anti-aliasing, 1 = black dot) of the page at that dpi, rows padded to whole bytes. `z64` data is `:Z64:<base64 of zlib>:<CRC-16/XMODEM (poly 0x1021, init 0) of the base64, 4 uppercase hex digits>`; `hex` is uppercase hex;
-  - page size comes from the PDF's MediaBox; pages are rasterized by `pdftoppm -mono` (poppler-utils, in the Docker image only), at most 1,000 pages, each `pdftoppm` run limited to 60 s;
+- `POST /rasterize` (token), JSON `{ "pdf": "<base64>", "dpi": 203 | 300 | 600, "encoding": "z64" | "hex" | "raw" }` (all three required) -> `200 { "pages": [ { "widthMm", "heightMm", "widthDots", "heightDots", "bytesPerRow", "gfa" | "rows" } ] }`:
+  - each page is a 1-bit bitmap at that dpi (1 = black dot, rows padded to whole bytes, most significant bit first). It is rendered grey at 3 times the dpi, then each 3 x 3 block becomes one dot, black when the block's average grey is below 150 of 255 (edge blocks average the pixels they have, so the width is the pixel width divided by 3, rounded up). This is crisper than `pdftoppm -mono`, which speckles grey edges;
+  - `z64` and `hex` return `gfa`, one complete ZPL `^GFA,<bytes>,<bytes>,<bytes per row>,<data>` field. `z64` data is `:Z64:<base64 of zlib>:<CRC-16/XMODEM (poly 0x1021, init 0) of the base64, 4 uppercase hex digits>`; `hex` is uppercase hex. `raw` returns `rows`: the base64 of the packed bytes, `heightDots` x `bytesPerRow` long (for TSPL printers);
+  - page size comes from the PDF's MediaBox; pages are rasterized by `pdftoppm -gray` (poppler-utils, in the Docker image only), at most 1,000 pages, each `pdftoppm` run limited to 60 s;
   - not a readable PDF, too many pages, or a `pdftoppm` failure -> `422 { "message" }`; bad token -> 401; bad body -> 400.
 - Token: header `Authorization: Bearer <RENDER_TOKEN>`. It is checked only when `RENDER_TOKEN` is set, which it always is in Docker. The service listens on `HOST` (default `127.0.0.1`) and `PORT` (default `4000`), with a 30 MB body limit.
 
@@ -50,7 +51,7 @@ Tag the commit `nexus-vX.Y.Z` and push the tag (`git tag -a nexus-v1.1.0 -m … 
 
 ## Known limits
 
-- `/rasterize` has no memory bound: it holds every page's bitmap in memory, so keep 600 dpi runs small. A PDF's `/Rotate` is not reflected in `widthMm` / `heightMm`.
+- `/rasterize` has no memory bound: it holds every page's bitmap in memory, and renders at 3 times the dpi (1,800 dpi for 600), so keep 600 dpi runs small. A PDF's `/Rotate` is not reflected in `widthMm` / `heightMm`.
 - Picture fields are filled only in the document body (`word/document.xml`); pictures in headers and footers are left as placeholders.
 - Coming from Carbone Enterprise: `{d.x:barcode(qrcode)}` works and draws the same QR code as `{d.x:qrcode}`. A bare `{d.x}` as a picture's alt text (Enterprise's image syntax) is not supported: write `{d.x:image}`.
 

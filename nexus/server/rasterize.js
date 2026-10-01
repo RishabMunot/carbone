@@ -21,16 +21,54 @@ function crc16(text) {
   return crc;
 }
 
-// A binary PBM (P4) is "P4", width, height, one whitespace byte, then rows padded to whole bytes, 1 = black.
-function packPbm(pbm) {
-  const header = /^P4\s+(\d+)\s+(\d+)\s/.exec(pbm.subarray(0, 64).toString('latin1'));
-  if (!header) throw new Error('not a P4 bitmap');
-  const width = Number(header[1]);
-  const height = Number(header[2]);
-  const bytesPerRow = Math.ceil(width / 8);
-  const bytes = pbm.subarray(header[0].length, header[0].length + bytesPerRow * height);
-  if (bytes.length !== bytesPerRow * height) throw new Error('truncated P4 bitmap');
-  return { width, height, bytesPerRow, bytes };
+// Black when a dot's average grey (0-255) is below this. Chosen on a real TSC at 203 dpi.
+const THRESHOLD = 150;
+const FACTOR = 3;
+
+// A binary PGM (P5, maxval 255) is "P5", width, height, maxval, one whitespace byte, then one byte per pixel.
+// Whitespace separates the header fields, and "#" starts a comment that runs to the end of the line.
+function parsePgm(pgm) {
+  let pos = 0;
+  const token = () => {
+    for (;;) {
+      while (/\s/.test(String.fromCharCode(pgm[pos]))) pos++;
+      if (pgm[pos] !== 0x23) break;
+      while (pgm[pos] !== 0x0a) pos++;
+    }
+    const start = pos;
+    while (pos < pgm.length && !/\s/.test(String.fromCharCode(pgm[pos]))) pos++;
+    return pgm.toString('latin1', start, pos);
+  };
+  if (token() !== 'P5') throw new Error('not a P5 graymap');
+  const width = Number(token());
+  const height = Number(token());
+  if (token() !== '255') throw new Error('not an 8-bit graymap');
+  const gray = pgm.subarray(pos + 1, pos + 1 + width * height);
+  if (gray.length !== width * height) throw new Error('truncated P5 graymap');
+  return { width, height, gray };
+}
+
+// Averages each factor x factor block into one dot (edge blocks average the pixels they have); a dot is black when
+// the average is below the threshold. Rows are packed MSB-first, 1 = black, padded to whole bytes.
+function downsample(gray, width, height, factor, threshold) {
+  const dotsWide = Math.ceil(width / factor);
+  const dotsHigh = Math.ceil(height / factor);
+  const bytesPerRow = Math.ceil(dotsWide / 8);
+  const bytes = Buffer.alloc(bytesPerRow * dotsHigh);
+  for (let dy = 0; dy < dotsHigh; dy++) {
+    for (let dx = 0; dx < dotsWide; dx++) {
+      let sum = 0;
+      let count = 0;
+      for (let y = dy * factor; y < Math.min(height, (dy + 1) * factor); y++) {
+        for (let x = dx * factor; x < Math.min(width, (dx + 1) * factor); x++) {
+          sum += gray[y * width + x];
+          count++;
+        }
+      }
+      if (sum < threshold * count) bytes[dy * bytesPerRow + (dx >> 3)] |= 0x80 >> (dx & 7);
+    }
+  }
+  return { width: dotsWide, height: dotsHigh, bytesPerRow, bytes };
 }
 
 // One complete ^GFA field: "z64" is zlib -> base64 -> CRC of the base64; "hex" is uppercase hex.
@@ -45,7 +83,8 @@ function toGfa(bytes, bytesPerRow, encoding) {
 
 const toMm = (points) => Math.round((points / 72) * 25.4 * 100) / 100;
 
-// Every page of the PDF as a ZPL graphic at the printer's dpi (pdftoppm -mono: no anti-aliasing).
+// Every page of the PDF as a 1-bit bitmap at the printer's dpi: a ZPL graphic (z64, hex) or raw rows (raw).
+// Rendered grey at 3x the dpi, then thresholded down: pdftoppm -mono dithers thin edges into speckle.
 async function rasterize({ pdf, dpi, encoding }) {
   let sizes;
   try {
@@ -64,18 +103,22 @@ async function rasterize({ pdf, dpi, encoding }) {
       const n = String(i + 1);
       const out = path.join(dir, `page${n}`);
       try {
-        await run('pdftoppm', ['-mono', '-singlefile', '-r', String(dpi), '-f', n, '-l', n, file, out], { timeout: PAGE_TIMEOUT_MS });
+        await run('pdftoppm', ['-gray', '-singlefile', '-r', String(dpi * FACTOR), '-f', n, '-l', n, file, out], { timeout: PAGE_TIMEOUT_MS });
       } catch (e) {
         if (e.code === 'ENOENT') throw e;
         throw new RenderError(`pdftoppm failed on page ${n}: ${String(e.stderr || e.message).trim()}`);
       }
-      const image = packPbm(await fs.readFile(`${out}.pbm`));
+      const { width: pxWide, height: pxHigh, gray } = parsePgm(await fs.readFile(`${out}.pgm`));
+      const image = downsample(gray, pxWide, pxHigh, FACTOR, THRESHOLD);
       pages.push({
         widthMm: toMm(width),
         heightMm: toMm(height),
         widthDots: image.width,
         heightDots: image.height,
-        gfa: toGfa(image.bytes, image.bytesPerRow, encoding),
+        bytesPerRow: image.bytesPerRow,
+        ...(encoding === 'raw'
+          ? { rows: image.bytes.toString('base64') }
+          : { gfa: toGfa(image.bytes, image.bytesPerRow, encoding) }),
       });
     }
     return pages;
@@ -84,4 +127,4 @@ async function rasterize({ pdf, dpi, encoding }) {
   }
 }
 
-module.exports = { rasterize, packPbm, toGfa, crc16 };
+module.exports = { rasterize, parsePgm, downsample, toGfa, crc16 };
