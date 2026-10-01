@@ -4,6 +4,8 @@ const path = require('path');
 const os = require('os');
 const zlib = require('zlib');
 const { PDFDocument } = require('pdf-lib');
+const bwipjs = require('bwip-js');
+const { PNG } = require('pngjs');
 const { buildApp } = require('../server/app');
 const { render } = require('../server/render');
 const { rasterize, parsePgm, downsample, toGfa, crc16 } = require('../server/rasterize');
@@ -24,6 +26,10 @@ describe('rasterize packing', () => {
 
   it('parsePgm rejects a truncated image', () => {
     assert.throws(() => parsePgm(pgm(3, 2, [0, 1, 2])), /truncated/);
+  });
+
+  it('parsePgm ends on a comment with no newline instead of hanging', () => {
+    assert.throws(() => parsePgm(Buffer.from('P5\n4 4 # cut off')), /8-bit/);
   });
 
   it('downsample turns each 3 x 3 block into one dot, black first, MSB first', () => {
@@ -175,30 +181,31 @@ describe('real rasterize (needs LibreOffice and poppler)', function () {
     assert.ok(pages[0].gfa.startsWith('^GFA,') && pages[0].gfa.includes(':Z64:'));
   });
 
-  // 8 neighbours all white = a speckle dot that no printer should burn. The owner's speckle came from grey edges on
-  // real label pages; this pure-black fixture never made poppler 22.12's -mono speckle, so it guards against regressions.
-  const isolatedDots = ({ rows, widthDots, heightDots, bytesPerRow }) => {
-    const bytes = Buffer.from(rows, 'base64');
-    const black = (x, y) => x >= 0 && y >= 0 && x < widthDots && y < heightDots && (bytes[y * bytesPerRow + (x >> 3)] >> (7 - (x & 7))) & 1;
-    let count = 0;
-    for (let y = 0; y < heightDots; y++) {
-      for (let x = 0; x < widthDots; x++) {
-        if (!black(x, y)) continue;
-        let lonely = true;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && black(x + dx, y + dy)) lonely = false;
-        if (lonely) count++;
-      }
-    }
-    return count;
-  };
-
-  it('a thin diagonal at 203 dpi is 160 x 160 dots with no isolated black dot (pdftoppm -mono also left 0 here)', async function () {
+  // Code 128 at 2 dots per module, drawn at exactly one PNG pixel per dot (as pictures.js does). pdftoppm -mono makes
+  // every bar one dot too thin and every space one dot too wide; the 3x threshold keeps every width.
+  it('keeps every Code 128 bar and space at its exact width at 203 dpi (pdftoppm -mono got 15 widths wrong here)', async function () {
     this.timeout(60000);
-    const pdf = fs.readFileSync(path.join(__dirname, 'fixtures/diagonal.pdf'));
-    const [page] = await rasterize({ pdf, dpi: 203, encoding: 'raw' });
-    assert.deepStrictEqual([page.widthDots, page.heightDots, page.bytesPerRow], [160, 160, 20]);
-    assert.strictEqual(Buffer.from(page.rows, 'base64').length, 160 * 20);
-    assert.ok(Buffer.from(page.rows, 'base64').some((byte) => byte), 'the page is not blank');
-    assert.strictEqual(isolatedDots(page), 0);
+    const png = PNG.sync.read(await bwipjs.toBuffer({ bcid: 'code128', text: 'FAB000123', scale: 2, height: 8, paddingwidth: 0, paddingheight: 0 }));
+    const runsOf = (isBlack, width) => {
+      const runs = [];
+      for (let x = 0, start = 0; x < width; x++) {
+        if (x === width - 1 || isBlack(x) !== isBlack(x + 1)) { runs.push(x + 1 - start); start = x + 1; }
+      }
+      return runs;
+    };
+    const wanted = runsOf((x) => png.data[x * 4 + 3] > 128, png.width);
+
+    const dot = 72 / 203;
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([(png.width + 20) * dot, (png.height + 20) * dot]);
+    const image = await doc.embedPng(PNG.sync.write(png));
+    page.drawImage(image, { x: 10 * dot, y: 10 * dot, width: png.width * dot, height: png.height * dot });
+    const [out] = await rasterize({ pdf: Buffer.from(await doc.save()), dpi: 203, encoding: 'raw' });
+
+    const rows = Buffer.from(out.rows, 'base64');
+    const middle = Math.floor(out.heightDots / 2) * out.bytesPerRow;
+    const bit = (x) => (rows[middle + (x >> 3)] >> (7 - (x & 7))) & 1;
+    // drop the white margins either side of the barcode
+    assert.deepStrictEqual(runsOf(bit, out.widthDots).slice(1, -1), wanted);
   });
 });

@@ -73,14 +73,3 @@ docx('pictures.docx',
     rels: `<Relationship Id="rIdPh" Type="${R}/image" Target="media/placeholder.png"/>`,
     media: { 'word/media/placeholder.png': placeholderPng() },
   });
-
-// diagonal.pdf: a 20 x 20 mm page with one 0.3 pt diagonal line and the text "Ag" (for the rasterize edge test).
-(async () => {
-  const { PDFDocument, StandardFonts } = require('pdf-lib');
-  const doc = await PDFDocument.create();
-  const mm = (n) => (n / 25.4) * 72;
-  const page = doc.addPage([mm(20), mm(20)]);
-  page.drawLine({ start: { x: mm(2), y: mm(2) }, end: { x: mm(18), y: mm(18) }, thickness: 0.3 });
-  page.drawText('Ag', { x: mm(3), y: mm(12), size: 14, font: await doc.embedFont(StandardFonts.Helvetica) });
-  fs.writeFileSync(path.join(__dirname, 'diagonal.pdf'), await doc.save({ useObjectStreams: false }));
-})();

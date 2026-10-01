@@ -33,7 +33,7 @@ function parsePgm(pgm) {
     for (;;) {
       while (/\s/.test(String.fromCharCode(pgm[pos]))) pos++;
       if (pgm[pos] !== 0x23) break;
-      while (pgm[pos] !== 0x0a) pos++;
+      while (pos < pgm.length && pgm[pos] !== 0x0a) pos++;
     }
     const start = pos;
     while (pos < pgm.length && !/\s/.test(String.fromCharCode(pgm[pos]))) pos++;
